@@ -1,65 +1,143 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
 
 class TopoDomainSpace(nn.Module):
-    def __init__(self, num_concepts, dim, tau=0.1, margin=1.0):
+    """
+    Manages the 9-Level Topological Domains using Multivariate Gaussian Distributions.
+    """
+    def __init__(self, num_domains, d_model, margin=2.0):
         super().__init__()
-        self.dim = dim
-        self.tau = tau
+        self.d_model = d_model
         self.margin = margin
         
-        # 概念域的中心向量 (u_c) 和 半径 (r_c)
-        self.centers = nn.Parameter(torch.randn(num_concepts, dim))
-        self.radii = nn.Parameter(torch.ones(num_concepts) * 0.5)
+        # Domain Centroids (mu) and Diagonal Covariance (log_sigma for stability)
+        self.mu = nn.Parameter(torch.randn(num_domains, d_model))
+        self.log_sigma = nn.Parameter(torch.zeros(num_domains, d_model))
         
-    def membership_score(self, x_emb, concept_idx):
-        """计算Token嵌入 x_emb 在指定概念中的成员资格分数"""
-        u_c = self.centers[concept_idx]
-        r_c = F.softplus(self.radii[concept_idx]) # 保证半径为正
-        dist = torch.norm(x_emb - u_c, p=2, dim=-1)
-        # 依据公式: m(x, c) = sigmoid((r_c - ||e(x) - u_c||) / tau)
-        score = torch.sigmoid((r_c - dist) / self.tau)
-        return score
+    def get_sigma(self):
+        # Convert log_sigma to positive variance
+        return torch.exp(self.log_sigma)
 
-    def inclusion_loss(self, sub_idx, super_idx):
-        """计算 c1 包含于 c2 的结构损失 (L_rel 的一部分)"""
-        u_1, u_2 = self.centers[sub_idx], self.centers[super_idx]
-        r_1 = F.softplus(self.radii[sub_idx])
-        r_2 = F.softplus(self.radii[super_idx])
+    def compute_pdf(self, x, domain_idx):
+        """
+        Calculates the inclusion probability density of vector x in a specific domain.
+        x: [batch_size, seq_len, d_model]
+        """
+        mu_d = self.mu[domain_idx]
+        sigma_d = self.get_sigma()[domain_idx]
         
-        dist = torch.norm(u_1 - u_2, p=2)
-        # 理想情况下: dist + r_1 <= r_2
-        violation = F.relu(dist + r_1 - r_2) 
-        return violation
-
-    def disjoint_loss(self, c1_idx, c2_idx):
-        """计算 c1 与 c2 互斥的结构损失 (L_rel 的另一部分)"""
-        u_1, u_2 = self.centers[c1_idx], self.centers[c2_idx]
-        r_1 = F.softplus(self.radii[c1_idx])
-        r_2 = F.softplus(self.radii[c2_idx])
+        # Mahalanobis distance squared
+        diff = x - mu_d
+        mahalanobis_sq = (diff ** 2) / (sigma_d + 1e-9)
+        distance = mahalanobis_sq.sum(dim=-1)
         
-        dist = torch.norm(u_1 - u_2, p=2)
-        # 理想情况下: dist >= r_1 + r_2 + delta
-        violation = F.relu(r_1 + r_2 + self.margin - dist)
-        return violation
+        # Probability Density calculation
+        prob = torch.exp(-0.5 * distance)
+        return prob
 
-# --- 测试验证代码 ---
+    def kl_divergence_loss(self, sub_idx, super_idx):
+        """
+        Calculates KL Divergence for Structural Inclusion (Layer 2 within Layer 1).
+        """
+        mu_1, mu_2 = self.mu[sub_idx], self.mu[super_idx]
+        sig_1, sig_2 = self.get_sigma()[sub_idx], self.get_sigma()[super_idx]
+        
+        term1 = (sig_1 / (sig_2 + 1e-9)).sum()
+        term2 = ((mu_2 - mu_1) ** 2 / (sig_2 + 1e-9)).sum()
+        term3 = self.d_model
+        term4 = torch.log((sig_2.prod() + 1e-9) / (sig_1.prod() + 1e-9))
+        
+        kl_div = 0.5 * (term1 + term2 - term3 + term4)
+        return kl_div
+
+    def disjoint_loss(self, idx1, idx2):
+        """
+        Calculates Hinge Loss for Mutual Exclusivity (e.g., perpetual motion vs physics).
+        """
+        mu_1, mu_2 = self.mu[idx1], self.mu[idx2]
+        dist = torch.norm(mu_1 - mu_2, p=2)
+        # Margin-based disjoint enforcement
+        return F.relu(self.margin - dist)
+
+
+class SpatialIndexedAttention(nn.Module):
+    """
+    Executes Localized Attention masked by Topological Domain constraints.
+    """
+    def __init__(self, d_model, num_heads):
+        super().__init__()
+        self.d_model = d_model
+        self.num_heads = num_heads
+        self.qkv_proj = nn.Linear(d_model, 3 * d_model)
+        self.out_proj = nn.Linear(d_model, d_model)
+
+    def forward(self, x, topo_space, active_domain_idx, threshold=0.01):
+        batch_size, seq_len, _ = x.size()
+        
+        # Step 1: Compute Topological Inclusion Mask
+        inclusion_prob = topo_space.compute_pdf(x, active_domain_idx)
+        domain_mask = (inclusion_prob >= threshold).float()
+        attn_mask = domain_mask.unsqueeze(1).unsqueeze(2) # [B, 1, 1, S]
+        
+        # Step 2: QKV Projection
+        qkv = self.qkv_proj(x).chunk(3, dim=-1)
+        q, k, v = map(lambda t: t.view(batch_size, seq_len, self.num_heads, -1).transpose(1, 2), qkv)
+        
+        # Step 3: Spatially Masked Attention
+        scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(q.size(-1))
+        scores = scores.masked_fill(attn_mask == 0, float('-inf'))
+        attn_weights = F.softmax(scores, dim=-1)
+        
+        out = torch.matmul(attn_weights, v)
+        out = out.transpose(1, 2).contiguous().view(batch_size, seq_len, self.d_model)
+        
+        return self.out_proj(out), inclusion_prob
+
+
+# --- Validation and Use Cases ---
 if __name__ == "__main__":
-    # 初始化拓扑空间，假设有3个概念：0=Animal(领域带), 1=Cat(实体带), 2=Machine(领域带)
-    topo_space = TopoDomainSpace(num_concepts=3, dim=256)
+    torch.manual_seed(42)
+    d_model = 256
     
-    # 模拟构建损失函数的过程: L = L_LM + alpha*L_mem + beta*L_rel + gamma*L_con
+    # Initialize Architecture
+    topo_space = TopoDomainSpace(num_domains=10, d_model=d_model)
+    attn_layer = SpatialIndexedAttention(d_model, num_heads=8)
     
-    # 1. 设置知识图谱/本体约束
-    loss_inc = topo_space.inclusion_loss(sub_idx=1, super_idx=0) # Cat 必须属于 Animal
-    loss_dis = topo_space.disjoint_loss(c1_idx=0, c2_idx=2)      # Animal 必须与 Machine 互斥
+    # Define Indices
+    DOMAIN_PHYSICS = 0  # Macro Domain (Layer 1)
+    DOMAIN_XIANXIA = 1  # Meso Domain (Layer 2)
     
-    # 2. 模拟Token成员资格检测
-    mock_token_emb = torch.randn(256) 
-    score_cat = topo_space.membership_score(mock_token_emb, concept_idx=1)
+    print("=== TopoLM Execution Trace ===")
     
-    # 整体结构损失
-    beta = 1.0
-    L_rel = beta * (loss_inc + loss_dis)
-    print(f"当前未优化的结构矛盾损失 (L_rel): {L_rel.item():.4f}")
+    # Case 1: Axiomatic Violation (Thermodynamics)
+    print("\n[Case 1] Input: 'Closed-system 100% efficiency engine'")
+    tokens_physics = torch.cat([
+        torch.randn(1, 1, d_model) * 0.1,  # "engine" (In domain)
+        torch.randn(1, 1, d_model) * 5.0   # "perpetual_motion" (Out of bounds)
+    ], dim=1)
+    
+    _, probs_physics = attn_layer(tokens_physics, topo_space, DOMAIN_PHYSICS)
+    
+    for i, token in enumerate(["engine", "perpetual_motion"]):
+        prob = probs_physics[0][i].item()
+        status = "ACCEPTED" if prob >= 0.01 else "REJECTED (Computational Friction)"
+        print(f"Token: {token:<20} | Prob: {prob:.4f} | {status}")
+        
+    # Case 2: Cross-Domain Decoupling (Literary Creation)
+    print("\n[Case 2] Input: 'Ascending to the clouds without a sword' (《十万里风雪客》)")
+    tokens_xianxia = torch.cat([
+        torch.randn(1, 1, d_model) * 0.1,  # "inner_qi"
+        torch.randn(1, 1, d_model) * 0.1   # "ascension"
+    ], dim=1)
+    
+    # Shift centroid to simulate switching to the Xianxia domain
+    topo_space.mu.data[DOMAIN_XIANXIA] = tokens_xianxia[0].mean(dim=0)
+    
+    _, probs_xianxia = attn_layer(tokens_xianxia, topo_space, DOMAIN_XIANXIA)
+    
+    for i, token in enumerate(["inner_qi", "ascension"]):
+        prob = probs_xianxia[0][i].item()
+        status = "ACCEPTED" if prob >= 0.01 else "REJECTED"
+        print(f"Token: {token:<20} | Prob: {prob:.4f} | {status}")
