@@ -4,7 +4,7 @@ Here is the English version of the `README.md` file, tailored to meet the standa
 
 # TopoLM: Topological Domain Language Model
 
-**Author:** Li Peng (Pen name: 乱七八糟的思绪)
+**Author:** Li Peng 
 
 **Paper:** *Toward Artificial General Intelligence: A Cognitive Architecture Based on 9-Level Token Stratification and Topological Domain Embeddings*
 
