@@ -1,7 +1,3 @@
-Here is the English version of the `README.md` file, tailored to meet the standards of top-tier open-source AI projects.
-
----
-
 # TopoLM: Topological Domain Language Model
 
 **Author:** Li Peng 
