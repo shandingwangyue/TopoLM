@@ -1,0 +1,27 @@
+# TopoLM 基础架构与训练配置
+model:
+  d_model: 64
+  num_heads: 4
+  max_seq_len: 128
+  num_domains: 2
+  init_log_sigma: 0.5
+  topology_temperature: 1.0
+  topology_bias_scale: 1.0
+
+loss:
+  alpha_assign: 1.0      # 对比域归属损失权重
+  alpha_nll: 0.05        # 全高斯负对数似然 (体积守恒) 权重
+  beta_rel: 0.5          # 概念中心排斥损失权重
+  beta_inc: 0.5          # 层级包含损失权重
+  margin: 8.0            # 互斥域欧氏距离边界
+
+training:
+  epochs: 150
+  lr: 0.003
+  weight_decay: 0.01
+  seq_len: 24
+  device: "cuda"
+
+domains:
+  PHYSICS: 0
+  FANTASY: 1
