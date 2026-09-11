@@ -102,6 +102,17 @@ The above results provide rigorous empirical evidence addressing the academic co
 git clone https://github.com/shandingwangyue/TopoLM.git
 cd TopoLM
 pip install torch transformers
-python train_real_text.py
+python train_topolm.py
+# E2: Poset Containment and Transitivity
+python experiments/hierarchy.py
+
+# E3: Axiomatic Paradox Detection & Contradiction Friction
+python experiments/contradiction.py
+
+# E4: Zero-Shot Topological Barycenter Transfer
+python experiments/generalization.py
 
 ```
+## old files
+train_toy_fixed.py
+train_real_text.py
