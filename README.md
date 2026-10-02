@@ -116,3 +116,18 @@ python experiments/generalization.py
 ## old files
 train_toy_fixed.py
 train_real_text.py
+
+
+## 🚀 [Update Oct 2026] Phase 1 Milestone: Large-Scale Ontological Emergence
+
+> **Note to Reviewers (Neurocomputing Submission):** 
+> The original sandbox implementation and E1-E4 experiments corresponding to our manuscript (v2.1) remain untouched in the root directory. You can also access the exact snapshot via the [v2.1 Release Tag](https://github.com/shandingwangyue/TopoLM/releases/tag/v2.1-Neurocomputing-Submission).
+
+We have significantly scaled up the Phase 1 Topological Grounding engine. By migrating beyond small-scale proofs-of-concept, we subjected the architecture to a stress test using **60,786 unlabelled empirical relations** from WordNet. 
+
+Without any manual hierarchical labeling or quantile slicing, the 128-dimensional topological manifold successfully resisted gradient collision and self-organized into a definitive **9-level cognitive hierarchy** governed by a strict Power-Law distribution. Over 50,000 micro-entities converged at the base (Level 1), while macroscopic categories (e.g., *organism, person, artifact, cognition*) autonomously accumulated maximal topological volume (Levels 8-9).
+
+All assets from this scaled-up validation are isolated in the `Phase1_ScaleUp_Experiment/` directory, including:
+* **`run_emergence_real_data.py`**: The standalone dynamics engine demonstrating spontaneous stratification.
+* **`checkpoints/topolm_phase1_emergence.pth`**: The frozen 128-D spatial backbone (conceptual coordinates and absolute radii), which will serve as the immutable constant for Phase 2 unsupervised language fleshing.
+* **`results/emergence_distribution.png`**: High-resolution visualization of the emergent Power-Law hierarchy.
